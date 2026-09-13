@@ -1,5 +1,9 @@
 import { Fragment } from "react";
 import Link from "next/link";
+import SortableTable, {
+  type Column,
+  type Row,
+} from "./SortableTable";
 import type {
   Division,
   RollingStore,
@@ -275,8 +279,8 @@ export function RollingTable({
 }
 
 /* ---------------- weekly breakout ---------------- */
-/* Net sales per store per week, one column pair per week. Grows sideways
-   as weeks are added rather than needing a new layout. */
+/* Net sales per store per week. Sortable on every column; the column set
+   grows sideways as weeks are added. */
 
 export function WeeklyBreakout({
   series,
@@ -285,14 +289,38 @@ export function WeeklyBreakout({
   series: StoreSeries[];
   weeks: { weekEnding: string; weekLabel: string }[];
 }) {
-  const totalsByWeek = weeks.map((w) => {
-    const pts = series
-      .map((s) => s.points.find((p) => p.weekEnding === w.weekEnding))
-      .filter(Boolean) as { netSales: number; units: number | null }[];
-    return {
-      netSales: pts.reduce((a, p) => a + p.netSales, 0),
-      units: pts.reduce((a, p) => a + (p.units ?? 0), 0),
-    };
+  const columns: Column[] = [
+    { key: "store", label: "Store", format: "text" },
+    ...weeks.flatMap((w): Column[] => [
+      { key: `u_${w.weekEnding}`, label: "Units", format: "int", group: w.weekLabel },
+      { key: `s_${w.weekEnding}`, label: "Net sales", format: "money", group: w.weekLabel },
+    ]),
+    { key: "breakeven", label: "Weekly breakeven", format: "money" },
+    { key: "total", label: "Window total", format: "money" },
+    { key: "variance", label: "Over / short", format: "signedMoney" },
+    { key: "attainment", label: "Attainment", format: "pct" },
+  ];
+
+  const rows: Row[] = series.map((s) => {
+    const values: Row["values"] = { store: s.store };
+    const tones: NonNullable<Row["tones"]> = {};
+    for (const w of weeks) {
+      const p = s.points.find((x) => x.weekEnding === w.weekEnding);
+      values[`u_${w.weekEnding}`] = p?.units ?? null;
+      values[`s_${w.weekEnding}`] = p ? p.netSales : null;
+      tones[`s_${w.weekEnding}`] = p
+        ? p.netSales < p.breakeven
+          ? "under"
+          : "over"
+        : null;
+    }
+    values.breakeven = s.breakeven;
+    values.total = s.total;
+    values.variance = s.variance;
+    values.attainment = s.attainment;
+    tones.variance = s.variance >= 0 ? "over" : "under";
+    tones.attainment = s.variance >= 0 ? "over" : "under";
+    return { id: s.store, values, tones };
   });
 
   const grand = series.reduce(
@@ -305,82 +333,41 @@ export function WeeklyBreakout({
   );
   const gVar = grand.total - grand.target;
 
+  const totalValues: Row["values"] = { store: "All stores" };
+  for (const w of weeks) {
+    const pts = series
+      .map((s) => s.points.find((p) => p.weekEnding === w.weekEnding))
+      .filter(Boolean) as { netSales: number; units: number | null }[];
+    totalValues[`u_${w.weekEnding}`] = pts.reduce(
+      (a, p) => a + (p.units ?? 0),
+      0
+    );
+    totalValues[`s_${w.weekEnding}`] = pts.reduce((a, p) => a + p.netSales, 0);
+  }
+  totalValues.breakeven = grand.be;
+  totalValues.total = grand.total;
+  totalValues.variance = gVar;
+  totalValues.attainment = grand.target
+    ? (grand.total / grand.target) * 100
+    : 0;
+
+  const totalRow: Row = {
+    id: "total",
+    values: totalValues,
+    tones: {
+      variance: gVar >= 0 ? "over" : "under",
+      attainment: gVar >= 0 ? "over" : "under",
+    },
+  };
+
   return (
-    <div className="table-scroll">
-      <table>
-        <thead>
-          <tr>
-            <th scope="col">Store</th>
-            {weeks.map((w) => (
-              <th key={w.weekEnding} scope="col" colSpan={2}>
-                {w.weekLabel}
-              </th>
-            ))}
-            <th scope="col">Weekly breakeven</th>
-            <th scope="col">Window total</th>
-            <th scope="col">Over / short</th>
-            <th scope="col">Attainment</th>
-          </tr>
-          <tr>
-            <th scope="col" />
-            {weeks.map((w) => (
-              <Fragment key={w.weekEnding}>
-                <th scope="col">Units</th>
-                <th scope="col">Net sales</th>
-              </Fragment>
-            ))}
-            <th scope="col" />
-            <th scope="col" />
-            <th scope="col" />
-            <th scope="col" />
-          </tr>
-        </thead>
-        <tbody>
-          {series.map((s) => (
-            <tr key={s.store}>
-              <td>{s.store}</td>
-              {weeks.map((w) => {
-                const p = s.points.find((x) => x.weekEnding === w.weekEnding);
-                const missed = p ? p.netSales < p.breakeven : false;
-                return (
-                  <Fragment key={w.weekEnding}>
-                    <td>{p?.units?.toLocaleString("en-US") ?? "—"}</td>
-                    <td className={p ? (missed ? "under" : "over") : undefined}>
-                      {p ? money(p.netSales) : "—"}
-                    </td>
-                  </Fragment>
-                );
-              })}
-              <td>{money(s.breakeven)}</td>
-              <td>{money(s.total)}</td>
-              <td className={s.variance >= 0 ? "over" : "under"}>
-                {signedMoney(s.variance)}
-              </td>
-              <td className={s.variance >= 0 ? "over" : "under"}>
-                {Math.round(s.attainment)}%
-              </td>
-            </tr>
-          ))}
-          <tr className="total">
-            <td>All stores</td>
-            {totalsByWeek.map((t, i) => (
-              <Fragment key={weeks[i].weekEnding}>
-                <td>{t.units.toLocaleString("en-US")}</td>
-                <td>{money(t.netSales)}</td>
-              </Fragment>
-            ))}
-            <td>{money(grand.be)}</td>
-            <td>{money(grand.total)}</td>
-            <td className={gVar >= 0 ? "over" : "under"}>
-              {signedMoney(gVar)}
-            </td>
-            <td className={gVar >= 0 ? "over" : "under"}>
-              {grand.target ? Math.round((grand.total / grand.target) * 100) : 0}%
-            </td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
+    <SortableTable
+      columns={columns}
+      rows={rows}
+      totalRow={totalRow}
+      defaultSort="total"
+      defaultDir="desc"
+    />
   );
 }
 
@@ -427,45 +414,46 @@ export function WeeklyTable({ rows }: { rows: WeekTotal[] }) {
 /* ---------------- breakeven build-up ---------------- */
 
 export function BreakevenTable({ stores }: { stores: Store[] }) {
+  const columns: Column[] = [
+    { key: "store", label: "Store", format: "text" },
+    { key: "cogs", label: "COGS", format: "pct" },
+    { key: "card", label: "Card", format: "pct" },
+    { key: "adFund", label: "Ad fund", format: "pct" },
+    { key: "royalty", label: "Royalty", format: "pct" },
+    { key: "payroll", label: "Payroll", format: "pct" },
+    { key: "bonus", label: "Bonus", format: "pct" },
+    { key: "variable", label: "Variable", format: "pct" },
+    { key: "margin", label: "Margin", format: "pct" },
+    { key: "monthlyFixed", label: "Monthly fixed", format: "money" },
+    { key: "monthlyBe", label: "Monthly breakeven", format: "money" },
+    { key: "weeklyBe", label: "Weekly breakeven", format: "money" },
+  ];
+
+  const rows: Row[] = stores.map((s) => ({
+    id: s.id,
+    values: {
+      store: s.name,
+      cogs: s.rates.cogs,
+      card: s.rates.card,
+      adFund: s.rates.adFund,
+      royalty: s.rates.royalty,
+      payroll: s.rates.payroll,
+      bonus: s.rates.bonus,
+      variable: s.totalVariable,
+      margin: s.contributionMargin,
+      monthlyFixed: s.monthlyFixed,
+      monthlyBe: s.monthlyBreakeven,
+      weeklyBe: s.weeklyBreakeven,
+    },
+  }));
+
   return (
-    <div className="table-scroll">
-      <table>
-        <thead>
-          <tr>
-            <th scope="col">Store</th>
-            <th scope="col">COGS</th>
-            <th scope="col">Card</th>
-            <th scope="col">Ad fund</th>
-            <th scope="col">Royalty</th>
-            <th scope="col">Payroll</th>
-            <th scope="col">Bonus</th>
-            <th scope="col">Variable</th>
-            <th scope="col">Margin</th>
-            <th scope="col">Monthly fixed</th>
-            <th scope="col">Monthly breakeven</th>
-            <th scope="col">Weekly breakeven</th>
-          </tr>
-        </thead>
-        <tbody>
-          {stores.map((s) => (
-            <tr key={s.id}>
-              <td>{s.name}</td>
-              <td>{pct(s.rates.cogs)}</td>
-              <td>{pct(s.rates.card)}</td>
-              <td>{pct(s.rates.adFund)}</td>
-              <td>{pct(s.rates.royalty)}</td>
-              <td>{pct(s.rates.payroll)}</td>
-              <td>{pct(s.rates.bonus)}</td>
-              <td>{pct(s.totalVariable)}</td>
-              <td>{pct(s.contributionMargin)}</td>
-              <td>{money(s.monthlyFixed)}</td>
-              <td>{money(s.monthlyBreakeven)}</td>
-              <td>{money(s.weeklyBreakeven)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+    <SortableTable
+      columns={columns}
+      rows={rows}
+      defaultSort="monthlyBe"
+      defaultDir="desc"
+    />
   );
 }
 
