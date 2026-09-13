@@ -88,6 +88,25 @@ function pick(fields: Record<string, any>, ...names: string[]): any {
 /** Try "<base> (%)" and "<base> %" and the bare name. */
 const pctNames = (base: string) => [`${base} (%)`, `${base} %`, base];
 
+/**
+ * Percent fields arrive either as 0-100 (63.52) or as decimal fractions
+ * (0.6352), depending on whether the column is a plain number or Airtable's
+ * native Percent type. Deciding per value is unsafe — a genuine 1.1% bonus
+ * rate and a 110% attainment are indistinguishable in isolation — so the
+ * scale is decided once per table from the largest sample value. Real cost
+ * ratios and margins always exceed 1.5 when expressed as percentages.
+ */
+const scale = (v: number | null, k: number): number | null =>
+  v === null ? null : v * k;
+
+function percentScale(samples: (number | null)[]): 1 | 100 {
+  const max = samples.reduce<number>(
+    (m, v) => (v === null || Number.isNaN(v) ? m : Math.max(m, Math.abs(v))),
+    0
+  );
+  return max > 0 && max <= 1.5 ? 100 : 1;
+}
+
 export type Division = {
   id: string;
   name: string;
@@ -165,6 +184,11 @@ export const slugify = (s: string) =>
 
 export async function getDivisions(): Promise<Division[]> {
   const recs = await fetchTable(TABLES.divisions);
+  const k = percentScale(
+    recs.map((r) =>
+      num(pick(r.fields, ...pctNames("Blended Contribution Margin")))
+    )
+  );
   return recs
     .map((r) => {
       const name = r.fields["Division"] ?? "";
@@ -176,8 +200,9 @@ export async function getDivisions(): Promise<Division[]> {
         storeCount: num(r.fields["Store Count"]) ?? 0,
         dataPeriod: r.fields["Data Period"] ?? "",
         corporateOverhead: num(r.fields["Corporate Overhead (Monthly)"]),
-        blendedMargin: num(
-          pick(r.fields, ...pctNames("Blended Contribution Margin"))
+        blendedMargin: scale(
+          num(pick(r.fields, ...pctNames("Blended Contribution Margin"))),
+          k
         ),
         extraMonthly: num(r.fields["Extra Monthly Sales Needed"]),
         extraWeekly: num(r.fields["Extra Weekly Sales Needed"]),
@@ -197,6 +222,13 @@ export async function getStores(): Promise<Store[]> {
   const divName = new Map(divisions.map((d) => [d.id, d.name]));
   const divIdByName = new Map(divisions.map((d) => [d.name, d.id]));
 
+  // Contribution margin is the sentinel: always well above 1.5 as a percent.
+  const k = percentScale(
+    recs.map((r) =>
+      num(pick(r.fields, ...pctNames("Contribution Margin")))
+    )
+  );
+
   return recs
     .map((r) => {
       const f = r.fields;
@@ -214,21 +246,25 @@ export async function getStores(): Promise<Store[]> {
         monthlySales: num(f["Monthly Sales (YTD avg)"]) ?? 0,
         weeklySales: num(f["Weekly Sales (YTD avg)"]) ?? 0,
         rates: {
-          cogs: num(pick(f, ...pctNames("COGS"))) ?? 0,
-          card: num(pick(f, ...pctNames("Card Fees"))) ?? 0,
-          adFund: num(pick(f, ...pctNames("Ad Fund"))) ?? 0,
-          royalty: num(pick(f, ...pctNames("Royalty"))) ?? 0,
-          payroll: num(pick(f, ...pctNames("Payroll"))) ?? 0,
-          bonus: num(pick(f, ...pctNames("Bonus"))) ?? 0,
+          cogs: scale(num(pick(f, ...pctNames("COGS"))), k) ?? 0,
+          card: scale(num(pick(f, ...pctNames("Card Fees"))), k) ?? 0,
+          adFund: scale(num(pick(f, ...pctNames("Ad Fund"))), k) ?? 0,
+          royalty: scale(num(pick(f, ...pctNames("Royalty"))), k) ?? 0,
+          payroll: scale(num(pick(f, ...pctNames("Payroll"))), k) ?? 0,
+          bonus: scale(num(pick(f, ...pctNames("Bonus"))), k) ?? 0,
         },
-        totalVariable: num(pick(f, ...pctNames("Total Variable"))) ?? 0,
-        contributionMargin: num(pick(f, ...pctNames("Contribution Margin"))) ?? 0,
+        totalVariable: scale(num(pick(f, ...pctNames("Total Variable"))), k) ?? 0,
+        contributionMargin:
+          scale(num(pick(f, ...pctNames("Contribution Margin"))), k) ?? 0,
         monthlyFixed: num(f["Monthly Fixed Cost"]) ?? 0,
         weeklyFixed: num(f["Weekly Fixed Cost"]) ?? 0,
         monthlyBreakeven: num(f["Monthly Breakeven"]) ?? 0,
         weeklyBreakeven: num(f["Weekly Breakeven"]) ?? 0,
         fixedPctOfSales:
-          num(pick(f, "Fixed % of Sales (%)", "Fixed % of Sales")) ?? 0,
+          scale(
+            num(pick(f, "Fixed % of Sales (%)", "Fixed % of Sales")),
+            k
+          ) ?? 0,
       };
     })
     .filter((s) => s.name);
@@ -247,6 +283,11 @@ export async function getWeeks(): Promise<WeekRow[]> {
   // division that store belongs to.
   const divByStoreName = new Map(
     stores.map((s) => [s.name, s.divisionId])
+  );
+
+  // Variance swings widest, so it is the most reliable sentinel here.
+  const k = percentScale(
+    recs.map((r) => num(pick(r.fields, ...pctNames("Variance"))))
   );
 
   return recs
@@ -272,14 +313,14 @@ export async function getWeeks(): Promise<WeekRow[]> {
         source: f["Source"] ?? "",
         units: num(f["Units"]),
         netSales: num(f["Net Sales"]) ?? 0,
-        discountPct: num(pick(f, ...pctNames("Discount"))),
+        discountPct: scale(num(pick(f, ...pctNames("Discount"))), k),
         avgTicket: num(f["Avg Ticket"]),
         weeklyBreakeven: num(f["Weekly Breakeven"]),
         variance: num(f["Variance $"]),
-        variancePct: num(pick(f, ...pctNames("Variance"))),
+        variancePct: scale(num(pick(f, ...pctNames("Variance"))), k),
         priorYear: num(f["Prior Year Same Week"]),
         yoy: num(f["YoY $"]),
-        yoyPct: num(pick(f, ...pctNames("YoY"))),
+        yoyPct: scale(num(pick(f, ...pctNames("YoY"))), k),
       };
     })
     .filter((w) => w.weekEnding)
@@ -288,17 +329,21 @@ export async function getWeeks(): Promise<WeekRow[]> {
 
 export async function getStandards(): Promise<Standard[]> {
   const recs = await fetchTable(TABLES.standards);
+  const k = percentScale(
+    recs.map((r) =>
+      num(pick(r.fields, "Target % of Revenue (%)", "Target % of Revenue"))
+    )
+  );
   return recs
     .map((r) => ({
       category: r.fields["Cost Category"] ?? "",
       type: r.fields["Cost Type"] ?? "",
       target:
-        num(
-          pick(
-            r.fields,
-            "Target % of Revenue (%)",
-            "Target % of Revenue"
-          )
+        scale(
+          num(
+            pick(r.fields, "Target % of Revenue (%)", "Target % of Revenue")
+          ),
+          k
         ) ?? 0,
       canChange: r.fields["Management Can Change"] ?? "",
       notes: r.fields["Notes"] ?? "",
