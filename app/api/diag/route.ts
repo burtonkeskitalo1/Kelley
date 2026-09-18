@@ -7,7 +7,7 @@ import { NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
 
-const EXPECTED = ["Divisions", "Stores", "Weekly Sales", "Cost Standards"];
+const EXPECTED = ["Divisions", "Stores", "Weekly Sales", "Cost Standards", "Financing"];
 
 export async function GET() {
   const token = process.env.AIRTABLE_TOKEN;
