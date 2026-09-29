@@ -852,3 +852,241 @@ thead tr.grouprow th:first-child {
 .lede {
   padding-top: 2.5rem;
 }
+
+/* ---------------- refund band ---------------- */
+
+.refund-band {
+  margin-top: var(--stack);
+  padding: 1.5rem 1.5rem 1.75rem;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-left: 4px solid var(--under);
+  border-radius: 6px;
+}
+
+.refund-head h2 {
+  margin: 0 0 0.35rem;
+  font-size: 1.05rem;
+  color: var(--ink);
+}
+
+.refund-head p {
+  margin: 0 0 1.35rem;
+  font-size: 0.8125rem;
+  color: var(--muted);
+  max-width: 44rem;
+}
+
+.refund-grid {
+  display: grid;
+  grid-template-columns: minmax(14rem, 1.1fr) minmax(12rem, 1fr) minmax(15rem, 1.2fr);
+  gap: 2rem;
+  align-items: start;
+}
+
+.refund-value {
+  font-size: clamp(2.5rem, 5vw, 3.25rem);
+  font-weight: 700;
+  line-height: 1.05;
+  letter-spacing: -0.02em;
+  color: var(--under);
+  margin-top: 0.15rem;
+}
+
+.refund-sub {
+  margin-top: 0.3rem;
+  font-size: 0.9375rem;
+  color: var(--ink);
+}
+
+.refund-delta {
+  margin-top: 0.6rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.refund-stats {
+  margin: 0;
+  display: grid;
+  gap: 0.9rem;
+}
+
+.refund-stats div {
+  margin: 0;
+}
+
+.refund-stats dt {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.refund-stats dd {
+  margin: 0.1rem 0 0;
+  font-size: 1.125rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+
+.refund-worst ul {
+  margin: 0.5rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.refund-worst li {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 0.75rem;
+  align-items: baseline;
+  padding: 0.4rem 0;
+  border-top: 1px solid var(--rule);
+  font-size: 0.875rem;
+}
+
+.refund-worst li:first-child {
+  border-top: none;
+}
+
+.refund-worst .rw-store {
+  color: var(--ink);
+}
+
+.refund-worst .rw-rate {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.refund-worst .rw-amt {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  min-width: 5rem;
+  text-align: right;
+}
+
+@media (max-width: 860px) {
+  .refund-grid {
+    grid-template-columns: 1fr;
+    gap: 1.5rem;
+  }
+}
+
+/* .over / .under are scoped to table cells elsewhere; the band needs its own */
+.refund-delta.over {
+  color: var(--over);
+}
+
+.refund-delta.under {
+  color: var(--under);
+}
+
+.refund-worst .rw-rate.under {
+  color: var(--under);
+}
+
+/* Returns trend ----------------------------------------------------------- */
+
+.returns-trend {
+  margin: 0;
+}
+
+.rt-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1.5rem;
+  list-style: none;
+  margin: 0 0 1rem;
+  padding: 0;
+  font-size: 0.8125rem;
+  color: var(--muted);
+}
+
+.rt-legend li {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.rt-key {
+  width: 11px;
+  height: 11px;
+  border-radius: 3px;
+  display: inline-block;
+}
+
+.rt-columns {
+  margin: 0;
+}
+
+.rt-seg {
+  font-size: 12px;
+  font-weight: 600;
+  text-anchor: middle;
+}
+
+.rt-total {
+  font-size: 13px;
+  font-weight: 700;
+  text-anchor: middle;
+  fill: var(--ink);
+}
+
+.rt-axis-rate {
+  font-size: 11px;
+  text-anchor: middle;
+  fill: var(--muted);
+}
+
+.rt-deltas {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem 3rem;
+  margin: 1.5rem 0 0;
+}
+
+.rt-deltas dt {
+  font-size: 0.75rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 0.25rem;
+}
+
+.rt-deltas dd {
+  margin: 0;
+  font-size: 1.375rem;
+  font-weight: 700;
+}
+
+.rt-deltas dd span {
+  display: block;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--muted);
+  margin-top: 0.15rem;
+}
+
+.rt-deltas dd.over {
+  color: var(--over);
+}
+
+.rt-deltas dd.under {
+  color: var(--under);
+}
+
+.rt-deltas dd.neutral {
+  color: var(--ink);
+}
+
+.rt-note {
+  margin: 0 0 1rem;
+  font-size: 0.8125rem;
+  color: var(--muted);
+  max-width: 62ch;
+}
+
+/* The loaded-weeks caveat sits under the delta pair, not against it. */
+.rt-deltas + .rt-note {
+  margin-top: 1.5rem;
+}
