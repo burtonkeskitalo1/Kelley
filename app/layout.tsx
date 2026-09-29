@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Archivo } from "next/font/google";
+const Archivo = (_o: any) => ({ variable: "--font-archivo", className: "font-archivo" });
 import "./globals.css";
 
 const archivo = Archivo({
