@@ -545,6 +545,13 @@ export function recentWeeks(weeks: WeekRow[], n = 4): string[] {
 
 export type RollingStore = {
   store: string;
+  /**
+   * Division the store belongs to. Carried on the rollup so the front-page
+   * refund chart can be filtered by division without a second lookup; blank
+   * when the weekly row has no division link.
+   */
+  divisionId: string | null;
+  division: string;
   weeks: number;
   netSales: number;
   target: number;
@@ -567,13 +574,21 @@ export type RollingStore = {
    * that does not contain them turned a -18.63% NY decline into -2.18%.
    */
   comparableNetSales: number;
+  /** Returns split summed over the window; null where not loaded. */
+  grossSales: number | null;
+  exchanges: number | null;
+  refunds: number | null;
+  /** 0-100. Refunds over gross sales for the window. */
+  refundPct: number | null;
 };
 
 /** Rolling window per store: sales, target, and prior-year, summed. */
 export function rollingByStore(
   weeks: WeekRow[],
-  windowWeeks: string[]
+  windowWeeks: string[],
+  divisions: Division[] = []
 ): RollingStore[] {
+  const divisionName = new Map(divisions.map((d) => [d.id, d.name]));
   const inWindow = weeks.filter(
     (w) => isActual(w) && windowWeeks.includes(w.weekEnding)
   );
@@ -592,8 +607,11 @@ export function rollingByStore(
       const units = rows.reduce((s, r) => s + (r.units ?? 0), 0);
       const priorYear = rows.reduce((s, r) => s + (r.priorYear ?? 0), 0);
       const hasPriorYear = priorYear > 0;
+      const divisionId = rows.find((r) => r.divisionId)?.divisionId ?? null;
       return {
         store,
+        divisionId,
+        division: divisionId ? divisionName.get(divisionId) ?? "" : "",
         weeks: rows.length,
         netSales,
         target,
@@ -604,6 +622,7 @@ export function rollingByStore(
         yoyPct: priorYear ? ((netSales - priorYear) / priorYear) * 100 : null,
         hasPriorYear,
         comparableNetSales: hasPriorYear ? netSales : 0,
+        ...returnsSplit(rows),
       };
     })
     .sort((a, b) => b.variancePct - a.variancePct);
@@ -1046,3 +1065,118 @@ export function divisionSeries(
     .sort((a, b) => b.total - a.total);
 }
 
+
+/* ---------------- returns trend ---------------- */
+
+export type ReturnsPoint = {
+  weekEnding: string;
+  weekLabel: string;
+  grossSales: number;
+  exchanges: number;
+  refunds: number;
+  /** 0-100, each over gross sales for the same week. */
+  refundPct: number;
+  exchangePct: number;
+};
+
+export type ReturnsTrendSeries = {
+  divisionId: string;
+  division: string;
+  slug: string;
+  points: ReturnsPoint[];
+};
+
+export type ReturnsTrendData = {
+  /** Weeks that carry the returns split, oldest first. */
+  group: ReturnsPoint[];
+  divisions: ReturnsTrendSeries[];
+  /** Weeks inside the window that have no returns figures loaded yet. */
+  missingWeeks: { weekEnding: string; weekLabel: string }[];
+};
+
+/**
+ * Refunds and exchanges by week, for the group and each division.
+ *
+ * Only weeks that actually carry the invoice-level returns split are included.
+ * A week without it is not drawn as zero -- it is reported separately in
+ * missingWeeks so the page can say the trend is shorter than the sales window
+ * rather than showing a phantom week with no returns.
+ *
+ * Divisions are carried on the same weeks as the group, so the small multiples
+ * share an x-axis; a division with no rows in a week is simply absent from
+ * that week rather than zero.
+ */
+export function returnsTrend(
+  weeks: WeekRow[],
+  windowWeeks: string[],
+  divisions: Division[]
+): ReturnsTrendData {
+  const ordered = [...windowWeeks].sort();
+  const labels = new Map(
+    windowLabels(weeks, ordered).map((l) => [l.weekEnding, l.weekLabel])
+  );
+
+  const inWindow = weeks.filter(
+    (w) => isActual(w) && ordered.includes(w.weekEnding)
+  );
+  const loaded = inWindow.filter((w) => w.grossSales !== null);
+
+  const point = (rows: WeekRow[], we: string): ReturnsPoint | null => {
+    if (!rows.length) return null;
+    const grossSales = rows.reduce((a, r) => a + (r.grossSales ?? 0), 0);
+    const exchanges = rows.reduce((a, r) => a + (r.exchanges ?? 0), 0);
+    const refunds = rows.reduce((a, r) => a + (r.refunds ?? 0), 0);
+    return {
+      weekEnding: we,
+      weekLabel: labels.get(we) ?? we,
+      grossSales,
+      exchanges,
+      refunds,
+      refundPct: grossSales ? (refunds / grossSales) * 100 : 0,
+      exchangePct: grossSales ? (exchanges / grossSales) * 100 : 0,
+    };
+  };
+
+  const weeksWithReturns = ordered.filter((we) =>
+    loaded.some((w) => w.weekEnding === we)
+  );
+
+  const group = weeksWithReturns
+    .map((we) => point(loaded.filter((w) => w.weekEnding === we), we))
+    .filter((p): p is ReturnsPoint => p !== null);
+
+  const byDivision = new Map<string, WeekRow[]>();
+  for (const w of loaded) {
+    if (!w.divisionId) continue;
+    const list = byDivision.get(w.divisionId) ?? [];
+    list.push(w);
+    byDivision.set(w.divisionId, list);
+  }
+
+  const series = divisions
+    .filter((d) => (byDivision.get(d.id) ?? []).length > 0)
+    .map((d) => {
+      const rows = byDivision.get(d.id) ?? [];
+      return {
+        divisionId: d.id,
+        division: d.name,
+        slug: d.slug,
+        points: weeksWithReturns
+          .map((we) => point(rows.filter((r) => r.weekEnding === we), we))
+          .filter((p): p is ReturnsPoint => p !== null),
+      };
+    })
+    .sort(
+      (a, b) =>
+        b.points.reduce((s, p) => s + p.refunds, 0) -
+        a.points.reduce((s, p) => s + p.refunds, 0)
+    );
+
+  return {
+    group,
+    divisions: series,
+    missingWeeks: ordered
+      .filter((we) => !weeksWithReturns.includes(we))
+      .map((we) => ({ weekEnding: we, weekLabel: labels.get(we) ?? we })),
+  };
+}
