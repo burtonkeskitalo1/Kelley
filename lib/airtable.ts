@@ -15,6 +15,7 @@ const TABLES = {
   standards: "Cost Standards",
   financing: "Financing",
   financingByStore: "Financing by Store",
+  promotions: "Promotions",
 } as const;
 
 type Rec = { id: string; fields: Record<string, any> };
@@ -1179,4 +1180,141 @@ export function returnsTrend(
       .filter((we) => !weeksWithReturns.includes(we))
       .map((we) => ({ weekEnding: we, weekLabel: labels.get(we) ?? we })),
   };
+}
+
+/* ---------------- net sales inside an arbitrary date range ---------------- */
+/*
+ * Financing periods do not line up with sales weeks: each provider's export
+ * covers its own window, and the sales table is weekly. To put financed volume
+ * next to what a store actually sold, we sum the weeks whose week-ending date
+ * falls inside the provider's period rather than prorating across a partial
+ * week -- prorating would invent a figure that ties to nothing.
+ *
+ * The consequence is that the comparison is "the weeks ending inside this
+ * period", not the period to the day, and the week count is returned so the
+ * page can say so. Weeks are matched on the week-ending string, which is ISO
+ * (YYYY-MM-DD) throughout the base and therefore sorts and compares as a date.
+ */
+
+export type StorePeriodSales = {
+  netSales: number;
+  /** How many weekly rows went into netSales. 0 means no week ended inside. */
+  weeks: number;
+};
+
+export function netSalesByStoreInRange(
+  weeks: WeekRow[],
+  start: string,
+  end: string
+): Map<string, StorePeriodSales> {
+  const out = new Map<string, StorePeriodSales>();
+  for (const w of weeks) {
+    if (!isActual(w)) continue;
+    if (w.weekEnding < start || w.weekEnding > end) continue;
+    const cur = out.get(w.storeName) ?? { netSales: 0, weeks: 0 };
+    cur.netSales += w.netSales;
+    cur.weeks += 1;
+    out.set(w.storeName, cur);
+  }
+  return out;
+}
+
+/* ---------------- promotions ---------------- */
+/*
+ * One row per promotion per scope, hand-entered in the "Promotions" table --
+ * the offer when it is set up, the results once the window closes. Nothing
+ * here is derived from the POS automatically, so a row whose Source is still
+ * "Offer sheet" carries plan numbers, not actuals, and the page labels it as
+ * such rather than totalling it in with measured results.
+ *
+ * Percents arrive as decimal fractions, the same convention as the rest of the
+ * base, and are converted to 0-100 here so the display helpers do not have to
+ * care which table a figure came from.
+ */
+
+export type PromotionRow = {
+  id: string;
+  name: string;
+  status: string;
+  startDate: string | null;
+  endDate: string | null;
+  scope: string;
+  offerType: string;
+  /** 0-100. Advertised discount. Null for dollar-off and bundle offers. */
+  discountPct: number | null;
+  discountOffered: number | null;
+  units: number | null;
+  grossSales: number | null;
+  discountGiven: number | null;
+  netSales: number | null;
+  refunds: number | null;
+  /** 0-100. Refunds over gross sales. */
+  refundPct: number | null;
+  cogs: number | null;
+  grossMargin: number | null;
+  /** 0-100. Gross margin over net sales. */
+  grossMarginPct: number | null;
+  baselineNetSales: number | null;
+  incrementalNetSales: number | null;
+  source: string;
+  notes: string;
+  /** True when the figures are measured rather than planned. */
+  isActual: boolean;
+};
+
+const promoNum = (v: any): number | null =>
+  v === undefined || v === null || v === "" ? null : Number(v);
+
+const promoPct = (v: any): number | null => {
+  const n = promoNum(v);
+  return n === null ? null : n * 100;
+};
+
+export async function getPromotions(): Promise<PromotionRow[]> {
+  const recs = await fetchTable(TABLES.promotions);
+  return recs
+    .map((r) => {
+      const f = r.fields;
+      const source = String(f["Source"] ?? "");
+      return {
+        id: r.id,
+        name: String(f["Promotion"] ?? "Untitled promotion"),
+        status: String(f["Status"] ?? ""),
+        startDate: f["Start Date"] ? String(f["Start Date"]) : null,
+        endDate: f["End Date"] ? String(f["End Date"]) : null,
+        scope: String(f["Scope"] ?? ""),
+        offerType: String(f["Offer Type"] ?? ""),
+        discountPct: promoPct(f["Discount %"]),
+        discountOffered: promoNum(f["Discount $ Offered"]),
+        units: promoNum(f["Units"]),
+        grossSales: promoNum(f["Gross Sales"]),
+        discountGiven: promoNum(f["Discount $ Given"]),
+        netSales: promoNum(f["Net Sales"]),
+        refunds: promoNum(f["Refunds $"]),
+        refundPct: promoPct(f["Refund %"]),
+        cogs: promoNum(f["COGS"]),
+        grossMargin: promoNum(f["Gross Margin $"]),
+        grossMarginPct: promoPct(f["Gross Margin %"]),
+        baselineNetSales: promoNum(f["Baseline Net Sales"]),
+        incrementalNetSales: promoNum(f["Incremental Net Sales"]),
+        source,
+        notes: String(f["Notes"] ?? ""),
+        isActual: source === "Erply POS" || source === "Provider report",
+      };
+    })
+    // Newest period first. A row with no end date sorts last rather than
+    // being dropped -- a promotion still being set up has no end date yet.
+    .sort((a, b) => (b.endDate ?? "").localeCompare(a.endDate ?? ""));
+}
+
+/** Promotions whose window overlaps today, by the dates on the row. */
+export function activePromotions(rows: PromotionRow[], today: string): PromotionRow[] {
+  return rows.filter(
+    (r) =>
+      r.status === "Active" ||
+      (r.startDate !== null &&
+        r.endDate !== null &&
+        r.startDate <= today &&
+        r.endDate >= today)
+  );
 }
