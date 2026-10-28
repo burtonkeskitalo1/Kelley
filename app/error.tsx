@@ -11,8 +11,7 @@ export default function Error({ error }: { error: Error }) {
           <code>AIRTABLE_BASE_ID</code> are set, that the token has{" "}
           <code>data.records:read</code> on this base, and that the tables are
           named <code>Divisions</code>, <code>Stores</code>,{" "}
-          <code>Weekly Sales</code>, <code>Cost Standards</code>, and{" "}
-          <code>Financing</code>.
+          <code>Weekly Sales</code>, and <code>Cost Standards</code>.
         </p>
       </div>
     </main>

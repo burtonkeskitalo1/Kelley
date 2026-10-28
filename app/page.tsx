@@ -136,8 +136,9 @@ export default async function ConsolidatedPage() {
               Net sales is every store. Same-store is the subset that also has
               a prior-year figure, on both sides of the comparison, so a
               division carrying a new store is not credited with growth it did
-              not earn. Refunds and exchanges have their own tab. Division
-              names link through to the full view.
+              not earn. Refunds and exchanges live on the operations
+              dashboard, not here. Division names link through to the full
+              view.
             </p>
           </div>
           <ConsolidatedTable rows={byDivision} total={total} />
