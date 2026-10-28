@@ -1,5 +1,4 @@
 import { Fragment } from "react";
-import { ReturnsTrend } from "./ReturnsTrend";
 import Link from "next/link";
 import SortableTable, {
   type Column,
@@ -8,8 +7,6 @@ import SortableTable, {
 import type {
   Division,
   DivisionRollup,
-  FinancingRow,
-  FinancingStoreRow,
   DivisionSeries,
   GroupTotal,
   RollingStore,
@@ -56,11 +53,13 @@ export function Masthead({ period }: { period?: string }) {
 /** Slug for the group-wide tab; it lives at "/" rather than "/<division>". */
 export const CONSOLIDATED_SLUG = "consolidated";
 
-/** Slug for the patient-financing tab, at "/financing". */
-export const FINANCING_SLUG = "financing";
-
-/** Slug for the returns tab, at "/refunds". */
-export const REFUNDS_SLUG = "refunds";
+/*
+ * Refunds and patient financing used to be tabs here. They moved to the
+ * operations dashboard, which is the view the store and district managers
+ * work from; this one is sales against breakeven and nothing else, so a
+ * number has exactly one home. The rollup functions behind them still live in
+ * lib/airtable.ts and are read from there by the other project.
+ */
 
 export function DivisionNav({
   divisions,
@@ -70,8 +69,6 @@ export function DivisionNav({
   current?: string;
 }) {
   const onConsolidated = current === CONSOLIDATED_SLUG;
-  const onFinancing = current === FINANCING_SLUG;
-  const onRefunds = current === REFUNDS_SLUG;
   return (
     <nav className="divnav" aria-label="Divisions">
       <div className="wrap">
@@ -106,24 +103,6 @@ export function DivisionNav({
               </li>
             );
           })}
-          <li>
-            <Link
-              href="/refunds"
-              className={onRefunds ? "current" : undefined}
-              aria-current={onRefunds ? "page" : undefined}
-            >
-              Refunds
-            </Link>
-          </li>
-          <li>
-            <Link
-              href="/financing"
-              className={onFinancing ? "current" : undefined}
-              aria-current={onFinancing ? "page" : undefined}
-            >
-              Financing
-            </Link>
-          </li>
         </ul>
       </div>
     </nav>
@@ -643,176 +622,14 @@ export function Standards({ rows }: { rows: Standard[] }) {
   );
 }
 
-/* ---------------- patient financing ---------------- */
 /*
- * Affirm, Snap Finance, and CareCredit compared on the same footing.
- * Rows come from getFinancing() -- one hand-entered row per provider per
- * statement period, not raw transactions. merchantFees/effectiveRate are
- * null rather than zero when a provider's export doesn't expose a fee
- * figure (CareCredit's transaction-level exports don't; its monthly
- * merchant statement does), and every table below renders that as "—"
- * rather than guessing.
+ * The patient-financing tables and the refund band, trend and store table used
+ * to live here. They moved with their tabs to the operations dashboard. The
+ * Airtable readers they use -- getFinancing, getFinancingByStore, returnsTrend,
+ * the returns split carried on rollingByStore -- are still in lib/airtable.ts,
+ * shared by both projects, so the definition of a refund cannot drift between
+ * the two views.
  */
-
-const financingColumns: Column[] = [
-  { key: "provider", label: "Provider", format: "text" },
-  { key: "period", label: "Period", format: "text", sortable: false },
-  { key: "transactions", label: "Transactions", format: "int" },
-  { key: "grossVolume", label: "Gross volume", format: "money" },
-  { key: "refunds", label: "Refunds $", format: "money" },
-  { key: "refundRate", label: "Refund rate", format: "pct1" },
-  { key: "netVolume", label: "Net volume", format: "money" },
-  { key: "merchantFees", label: "Merchant fees", format: "money" },
-  { key: "effectiveRate", label: "Effective rate", format: "pct1" },
-  { key: "avgTicket", label: "Avg ticket", format: "money" },
-];
-
-function periodLabel(r: FinancingRow) {
-  const start = r.periodStart
-    ? new Date(r.periodStart).toLocaleDateString("en-US", {
-        month: "short",
-        day: "numeric",
-      })
-    : null;
-  const end = r.periodEnd
-    ? new Date(r.periodEnd).toLocaleDateString("en-US", {
-        month: "short",
-        day: "numeric",
-        year: "numeric",
-      })
-    : r.periodEnd;
-  return start ? `${start} - ${end}` : end ?? "—";
-}
-
-function financingRowValues(r: FinancingRow): Row {
-  const refundRate = r.grossVolume ? (r.refunds / r.grossVolume) * 100 : 0;
-  return {
-    id: r.id,
-    values: {
-      provider: r.provider,
-      period: periodLabel(r),
-      transactions: r.transactions,
-      grossVolume: r.grossVolume,
-      refunds: r.refunds,
-      refundRate,
-      netVolume: r.netVolume,
-      merchantFees: r.merchantFees,
-      effectiveRate: r.effectiveRate,
-      avgTicket: r.avgTicket,
-    },
-    tones: {},
-  };
-}
-
-/** Headline comparison: the most recent period per provider, side by side. */
-export function FinancingComparison({ rows }: { rows: FinancingRow[] }) {
-  const tableRows = rows.map(financingRowValues);
-  return (
-    <SortableTable
-      columns={financingColumns}
-      rows={tableRows}
-      defaultSort="grossVolume"
-      defaultDir="desc"
-    />
-  );
-}
-
-/** Every period on record for every provider, most recent first. */
-export function FinancingHistory({ rows }: { rows: FinancingRow[] }) {
-  const tableRows = rows.map(financingRowValues);
-  // No defaultSort: getFinancing() already returns rows newest Period End
-  // first, and SortableTable preserves the given order when no sort key is
-  // set. Sorting on "period" instead would order by the formatted label
-  // string -- "Jul 31 - Aug 30" sorts above "Aug 18 - Sep 14" because "J"
-  // beats "A" -- which is alphabetical by month name, not chronological.
-  return <SortableTable columns={financingColumns} rows={tableRows} />;
-}
-
-/* ---------------- financing, by store ---------------- */
-/*
- * The store-level decomposition of one provider's period. Rendered one
- * provider at a time so the total row is meaningful: these rows sum to that
- * provider's row in the comparison table above.
- *
- * A store with no rows for a provider simply does not appear -- absence here
- * means the provider reported no activity for it in the window, not zero
- * sales. Rows labelled "Unmapped" are real volume whose provider-side
- * identifier has not been tied to a store yet; they are shown rather than
- * hidden so the column still totals.
- */
-
-const financingStoreColumns: Column[] = [
-  { key: "store", label: "Store", format: "text" },
-  { key: "transactions", label: "Transactions", format: "int" },
-  { key: "grossVolume", label: "Gross volume", format: "money" },
-  { key: "refunds", label: "Refunds $", format: "money" },
-  { key: "refundCount", label: "Refunds #", format: "int" },
-  { key: "netVolume", label: "Net volume", format: "money" },
-  { key: "merchantFees", label: "Merchant fees", format: "money" },
-  { key: "effectiveRate", label: "Effective rate", format: "pct1" },
-];
-
-function financingStoreValues(r: FinancingStoreRow): Row {
-  return {
-    id: r.id,
-    values: {
-      store: r.store,
-      transactions: r.transactions,
-      grossVolume: r.grossVolume,
-      refunds: r.refunds,
-      refundCount: r.refundCount,
-      netVolume: r.netVolume,
-      merchantFees: r.merchantFees,
-      effectiveRate: r.effectiveRate,
-    },
-    tones: { netVolume: r.netVolume < 0 ? "under" : null },
-  };
-}
-
-export function FinancingByStore({ rows }: { rows: FinancingStoreRow[] }) {
-  if (!rows.length) return null;
-  const tableRows = rows.map(financingStoreValues);
-  const sum = rows.reduce(
-    (a, r) => ({
-      transactions: a.transactions + r.transactions,
-      grossVolume: a.grossVolume + r.grossVolume,
-      refunds: a.refunds + r.refunds,
-      refundCount: a.refundCount + r.refundCount,
-      netVolume: a.netVolume + r.netVolume,
-      merchantFees: a.merchantFees + r.merchantFees,
-    }),
-    {
-      transactions: 0,
-      grossVolume: 0,
-      refunds: 0,
-      refundCount: 0,
-      netVolume: 0,
-      merchantFees: 0,
-    }
-  );
-  const totalRow: Row = {
-    id: "total",
-    values: {
-      store: "All stores",
-      ...sum,
-      // Derived from the summed figures, not averaged across the store rows --
-      // an unweighted average of store rates would overweight small stores.
-      effectiveRate: sum.grossVolume
-        ? (sum.merchantFees / sum.grossVolume) * 100
-        : null,
-    },
-    tones: {},
-  };
-  return (
-    <SortableTable
-      columns={financingStoreColumns}
-      rows={tableRows}
-      totalRow={totalRow}
-      defaultSort="grossVolume"
-      defaultDir="desc"
-    />
-  );
-}
 
 /* ---------------- trend ---------------- */
 /*
@@ -863,219 +680,5 @@ export function TrendLegend({ rows }: { rows: DivisionSeries[] }) {
         </li>
       ))}
     </ul>
-  );
-}
-
-
-/* ---------------- refunds ---------------- */
-/*
- * The headline band on the Refunds tab.
- *
- * Refunds are the one return figure that costs money: exchanges swap product
- * and keep the sale, refunds hand it back. A blended return rate buries that,
- * so this band states the refund figure on its own and shows which way it is
- * moving. The charts and the full store table below carry the detail; this is
- * emphasis, not a second source of truth.
- */
-
-export function RefundBand({
-  latest,
-  prior,
-  windowRefunds,
-  windowGross,
-  windowExchanges,
-  stores,
-}: {
-  latest: WeekTotal;
-  prior?: WeekTotal;
-  windowRefunds: number;
-  windowGross: number;
-  windowExchanges: number;
-  stores: RollingStore[];
-}) {
-  if (latest.refunds === null || latest.grossSales === null) return null;
-
-  const delta =
-    prior && prior.refunds !== null ? latest.refunds - prior.refunds : null;
-  const deltaPct =
-    prior && prior.refunds ? (delta! / prior.refunds) * 100 : null;
-  const ratePts =
-    prior && prior.refundPct !== null && latest.refundPct !== null
-      ? latest.refundPct - prior.refundPct
-      : null;
-  const groupRate = windowGross ? (windowRefunds / windowGross) * 100 : null;
-
-  // Ranked by RATE, not dollars: a big store refunding 5% is a smaller
-  // problem than a small one refunding 23%, and rate is what a manager can
-  // actually move.
-  const ranked = stores
-    .filter((s) => s.refundPct !== null && (s.grossSales ?? 0) > 0)
-    .sort((a, b) => (b.refundPct ?? 0) - (a.refundPct ?? 0));
-
-  return (
-    <section className="refund-band">
-      <div className="refund-head">
-        <h2>Refunds</h2>
-        <p>
-          Cash returned to customers. Exchanges &mdash; product swapped, sale
-          kept &mdash; are counted separately and are not in this figure.
-        </p>
-      </div>
-
-      <div className="refund-grid">
-        <div className="refund-hero">
-          <div className="figure-label">{latest.weekLabel}</div>
-          <div className="refund-value">{money(latest.refunds)}</div>
-          <div className="refund-sub">
-            {latest.refundPct === null ? "—" : pct(latest.refundPct, 2)} of
-            gross sales
-          </div>
-          {delta !== null ? (
-            <div className={`refund-delta ${delta <= 0 ? "over" : "under"}`}>
-              {signedMoney(delta)}
-              {deltaPct === null ? null : ` (${signedPct(deltaPct)})`} vs prior
-              week
-              {ratePts === null
-                ? null
-                : ` · ${ratePts <= 0 ? "−" : "+"}${Math.abs(ratePts).toFixed(
-                    2
-                  )} pts`}
-            </div>
-          ) : null}
-        </div>
-
-        <dl className="refund-stats">
-          <div>
-            <dt>Refunds, window to date</dt>
-            <dd>{money(windowRefunds)}</dd>
-          </div>
-          <div>
-            <dt>Refund rate, window</dt>
-            <dd>{groupRate === null ? "—" : pct(groupRate, 2)}</dd>
-          </div>
-        </dl>
-
-        <dl className="refund-stats">
-          <div>
-            <dt>Exchanges, window</dt>
-            <dd>{money(windowExchanges)}</dd>
-          </div>
-          <div>
-            <dt>Stores above the group rate</dt>
-            <dd>
-              {ranked.filter((r) => (r.refundPct ?? 0) > (groupRate ?? 0))
-                .length}{" "}
-              of {ranked.length}
-            </dd>
-          </div>
-        </dl>
-      </div>
-
-    </section>
-  );
-}
-
-/*
- * The refund spread chart is a client island: it carries division filters and
- * a top/bottom selector, so it needs state. Re-exported here so pages keep a
- * single import surface.
- */
-export { ReturnsTrend };
-
-/*
- * Every store's returns for the window, sortable.
- *
- * The same shape as the sales tables: every store, every column sortable, a
- * group total that stays pinned at the bottom. It opens sorted by refund rate
- * because that is the column a manager can act on -- a big store refunding 5%
- * is a smaller problem than a small one refunding 23% -- but refund dollars,
- * exchange share and gross are one click away.
- *
- * Rate columns carry a tone: above the group rate reads as the problem
- * colour, at or below it as the good one, so the ranking is visible without
- * reading every number.
- */
-
-const REFUND_COLUMNS: Column[] = [
-  { key: "store", label: "Store", format: "text" },
-  { key: "division", label: "Division", format: "text" },
-  { key: "grossSales", label: "Gross sales", format: "money" },
-  { key: "exchanges", label: "Exchanges", format: "money" },
-  { key: "exchangePct", label: "Exchange %", format: "pct1" },
-  { key: "refunds", label: "Refunds", format: "money" },
-  { key: "refundPct", label: "Refund %", format: "pct1" },
-  { key: "netSales", label: "Net sales", format: "money" },
-];
-
-export function RefundStoreTable({
-  rows,
-  groupRate,
-}: {
-  rows: RollingStore[];
-  groupRate: number | null;
-}) {
-  const reporting = rows.filter(
-    (r) => r.grossSales !== null && (r.grossSales ?? 0) > 0
-  );
-  if (!reporting.length) return null;
-
-  const tableRows: Row[] = reporting.map((r) => {
-    const gross = r.grossSales ?? 0;
-    const exchangePct = gross ? ((r.exchanges ?? 0) / gross) * 100 : null;
-    return {
-      id: r.store,
-      values: {
-        store: r.store,
-        division: r.division.replace(/^Good Feet\s*/, ""),
-        grossSales: gross,
-        exchanges: r.exchanges,
-        exchangePct,
-        refunds: r.refunds,
-        refundPct: r.refundPct,
-        netSales: r.netSales,
-      },
-      tones: {
-        refundPct:
-          r.refundPct === null || groupRate === null
-            ? null
-            : r.refundPct > groupRate
-              ? "under"
-              : "over",
-      },
-    };
-  });
-
-  const t = reporting.reduce(
-    (a, r) => ({
-      grossSales: a.grossSales + (r.grossSales ?? 0),
-      exchanges: a.exchanges + (r.exchanges ?? 0),
-      refunds: a.refunds + (r.refunds ?? 0),
-      netSales: a.netSales + r.netSales,
-    }),
-    { grossSales: 0, exchanges: 0, refunds: 0, netSales: 0 }
-  );
-
-  const totalRow: Row = {
-    id: "total",
-    values: {
-      store: "Kelley Group",
-      division: `${reporting.length} stores`,
-      grossSales: t.grossSales,
-      exchanges: t.exchanges,
-      exchangePct: t.grossSales ? (t.exchanges / t.grossSales) * 100 : null,
-      refunds: t.refunds,
-      refundPct: t.grossSales ? (t.refunds / t.grossSales) * 100 : null,
-      netSales: t.netSales,
-    },
-  };
-
-  return (
-    <SortableTable
-      columns={REFUND_COLUMNS}
-      rows={tableRows}
-      totalRow={totalRow}
-      defaultSort="refundPct"
-      defaultDir="desc"
-    />
   );
 }
